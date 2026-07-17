@@ -1,6 +1,15 @@
-﻿import { buildServer } from "../src/server";
+import { buildServer } from "../src/server";
+import { pool } from "../src/db";
 
 describe("job scheduler API", () => {
+  beforeEach(async () => {
+    await pool.query("TRUNCATE TABLE jobs CASCADE");
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
   it("creates a job via POST /jobs", async () => {
     const app = buildServer();
 
@@ -80,3 +89,4 @@ describe("job scheduler API", () => {
     expect(response.statusCode).toBe(204);
   });
 });
+
