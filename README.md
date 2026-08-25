@@ -1,4 +1,4 @@
-﻿markdown
+markdown
 # Distributed Job Scheduler
 
 A cron-as-a-service backend that runs scheduled jobs reliably across multiple worker
@@ -84,13 +84,15 @@ job-scheduler/
 
 ## API Reference
 
-| Method | Endpoint     | Description                            |
-|--------|--------------|-----------------------------------------|
-| POST   | `/jobs`      | Create a new job                        |
-| GET    | `/jobs`      | List all jobs                           |
-| GET    | `/jobs/:id`  | Get a single job by ID                  |
-| PUT    | `/jobs/:id`  | Update a job (status, schedule, etc.)   |
-| DELETE | `/jobs/:id`  | Delete a job                            |
+| Method | Endpoint           | Description                            |
+|--------|--------------------|----------------------------------------|
+| GET    | `/health`          | Health check (returns `{ status: "ok" }`) |
+| POST   | `/jobs`            | Create a new job                        |
+| GET    | `/jobs`            | List all jobs                           |
+| GET    | `/jobs/:id`        | Get a single job by ID                  |
+| GET    | `/jobs/:id/runs`   | List run history for a job              |
+| PUT    | `/jobs/:id`        | Update a job (status, schedule, etc.)   |
+| DELETE | `/jobs/:id`        | Delete a job                            |
 
 ## Prerequisites
 

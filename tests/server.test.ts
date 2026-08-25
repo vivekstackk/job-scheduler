@@ -88,5 +88,41 @@ describe("job scheduler API", () => {
 
     expect(response.statusCode).toBe(204);
   });
-});
 
+  it("returns health status via GET /health", async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: "GET", url: "/health" });
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.status).toBe("ok");
+    expect(body.timestamp).toBeDefined();
+  });
+
+  it("returns run history via GET /jobs/:id/runs", async () => {
+    const app = buildServer();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/jobs",
+      payload: { name: "a", cronExpression: "0 9 * * *", handlerType: "a" },
+    });
+    const job = JSON.parse(created.body);
+
+    const response = await app.inject({ method: "GET", url: `/jobs/${job.id}/runs` });
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(Array.isArray(body)).toBe(true);
+    expect(body).toHaveLength(0);
+  });
+
+  it("returns 404 for runs of a non-existent job", async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: "GET", url: "/jobs/does-not-exist/runs" });
+
+    expect(response.statusCode).toBe(404);
+  });
+});

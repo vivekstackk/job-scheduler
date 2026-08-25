@@ -1,11 +1,17 @@
-﻿import Fastify from "fastify";
+import Fastify from "fastify";
 import { JobStore } from "./jobStore";
+import { JobRunStore } from "./jobRunStore";
 import { CreateJobInput } from "./types";
 import { UpdateJobInput } from "./jobStore";
 
 export function buildServer() {
   const app = Fastify();
   const store = new JobStore();
+  const runStore = new JobRunStore();
+
+  app.get("/health", async () => {
+    return { status: "ok", timestamp: new Date().toISOString() };
+  });
 
   app.post<{ Body: CreateJobInput }>("/jobs", async (request, reply) => {
     const job = await store.create(request.body);
@@ -24,6 +30,15 @@ export function buildServer() {
       return { error: "job not found" };
     }
     return job;
+  });
+
+  app.get<{ Params: { id: string } }>("/jobs/:id/runs", async (request, reply) => {
+    const job = await store.get(request.params.id);
+    if (!job) {
+      reply.code(404);
+      return { error: "job not found" };
+    }
+    return runStore.listByJob(request.params.id);
   });
 
   app.put<{ Params: { id: string }; Body: UpdateJobInput }>("/jobs/:id", async (request, reply) => {
