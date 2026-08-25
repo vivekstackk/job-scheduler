@@ -1248,7 +1248,7 @@ font-size: 10px;
 
   margin-top: 20px;
 
-  font-size: 26px;
+  font-size: 28px;
 
   font-weight: 500;
 
@@ -1258,7 +1258,7 @@ font-size: 10px;
 .metric-cell small {
   color: #80837c;
 
-  font: 8px "IBM Plex Mono", monospace;
+  font: 10px "IBM Plex Mono", monospace;
 
   display: block;
 
@@ -1302,7 +1302,7 @@ font-size: 10px;
 }
 
 .panel-head > b {
-  font-size: 10px;
+  font-size: 12px;
 
   font-weight: 500;
 }
@@ -1434,7 +1434,7 @@ font-size: 10px;
 }
 
 .status-ring b {
-  font-size: 24px;
+  font-size: 26px;
 
   font-weight: 500;
 
@@ -1444,7 +1444,7 @@ font-size: 10px;
 .status-ring small {
   color: #83867e;
 
-  font-size: 8px;
+  font-size: 10px;
 
   margin-top: 2px;
 }
@@ -1470,7 +1470,7 @@ font-size: 10px;
 
   color: #73776f;
 
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .ring-key i,
@@ -2019,7 +2019,7 @@ font-size: 9px;
   .metric-cell b {
     margin-top: 16px;
 
-    font-size: 22px;
+    font-size: 24px;
   }
 }
 
@@ -2152,127 +2152,127 @@ font-size: 9px;
 
 /* Sidebar */
 .console-sidebar {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .console-brand {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .environment b {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .environment small {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .console-sidebar .side-section-label {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.12em;
 }
 
 .console-sidebar a,
 .console-sidebar button {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Top navigation */
 .crumb {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .header-tools input {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .header-tools button {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Page headings */
 .console-page {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .console-page h1 {
-  font-size: 30px;
+  font-size: 32px;
   line-height: 1.1;
 }
 
 .console-page > p,
 .page-description {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Filters: All / Active / Paused / Dead letter */
 .filter-row button {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .filter-row > span {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* Main table */
 .table-surface table {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .table-surface th {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 
 .table-surface td {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Job names */
 .job-cell {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 /* Cron expressions */
 .table-surface code {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* Handler / status / next run */
 .table-surface td:nth-child(3),
 .table-surface td:nth-child(5) {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Status labels */
 .status,
 .status-badge {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* Action buttons */
 .row-actions button {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Job count */
 .filter-row span {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* API connection indicator */
 .connection {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* User profile */
 .user-row b {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .user-row small {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 /* Better mobile readability */
@@ -2287,5 +2287,52 @@ font-size: 9px;
 
   .job-cell {
     font-size: 12px;
+  }
+}
+
+/* =========================================================
+   FINAL FONT-SIZE ONLY PASS
+   No layout, spacing, colors, borders or chart styles changed.
+   ========================================================= */
+
+.metric-cell > span {
+  font-size: 12px;
+}
+
+.metric-cell b {
+  font-size: 28px;
+}
+
+.metric-cell small {
+  font-size: 10px;
+}
+
+.panel-head > b {
+  font-size: 12px;
+}
+
+.panel-head > span {
+  font-size: 9px;
+}
+
+.axis {
+  font-size: 9px;
+}
+
+.status-ring b {
+  font-size: 26px;
+}
+
+.status-ring small {
+  font-size: 10px;
+}
+
+.ring-key > div {
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .metric-cell b {
+    font-size: 24px;
   }
 }

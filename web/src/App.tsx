@@ -67,7 +67,11 @@ type JobRun = {
 };
 
 
-const API = "/api";
+const API =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "/api"
+    : "https://job-scheduler-j948.onrender.com";
 
 async function api<T>(
   path: string,
@@ -716,21 +720,21 @@ function Dashboard() {
             to="/dashboard"
             icon={<LayoutDashboard />}
             label="Overview"
-            active={path === "/" || path === ""}
+            active={path === "/"}
             close={() => setMobileOpen(false)}
           />
           <SideLink
             to="/dashboard/runs"
             icon={<Activity />}
             label="Runs"
-            active={path.startsWith("/runs")}
+            active={path === "/runs"}
             close={() => setMobileOpen(false)}
           />
           <SideLink
             to="/dashboard/jobs"
             icon={<ListChecks />}
             label="Jobs"
-            active={path.startsWith("/jobs")}
+            active={path === "/jobs"}
             close={() => setMobileOpen(false)}
           />
         </SideSection>
@@ -806,9 +810,9 @@ function Dashboard() {
             Production
             <ChevronRight size={12} />
             <b>
-              {path.startsWith("/jobs")
+              {path === "/jobs"
                 ? "Jobs"
-                : path.startsWith("/runs")
+                : path === "/runs"
                 ? "Runs"
                 : "Overview"}
             </b>
@@ -852,7 +856,7 @@ function Dashboard() {
             <div className="loading-line short" />
             <span>Loading scheduler data…</span>
           </div>
-        ) : path.startsWith("/jobs") ? (
+        ) : path === "/jobs" ? (
           <JobsPage
             jobs={jobs}
             search={search}
@@ -860,7 +864,7 @@ function Dashboard() {
             createJob={createJob}
             deleteJob={deleteJob}
           />
-        ) : path.startsWith("/runs") ? (
+        ) : path === "/runs" ? (
           <RunsPage jobs={jobs} runs={runs} />
         ) : (
           <OverviewPage
