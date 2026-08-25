@@ -129,6 +129,12 @@ Get-Content sql/001_create_jobs.sql | docker exec -i job-scheduler-postgres-1 ps
 
 # 6. Run the API in development mode
 npm run dev
+
+# 7. (Optional) Run the Web Dashboard & Landing Page
+npm run web:dev
+# or:
+# cd web && npm install && npm run dev
+# then open http://localhost:5173
 ```
 
 ## Running Tests
