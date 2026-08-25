@@ -2,12 +2,13 @@
 
 const app = buildServer();
 
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT) || 3000;
+const host = "0.0.0.0";
 
 app.listen(
   {
     port,
-    host: "0.0.0.0",
+    host,
   },
   (err, address) => {
     if (err) {
