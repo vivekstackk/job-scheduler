@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgres:
     image: postgres:16
     restart: unless-stopped
@@ -10,14 +10,46 @@
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # The API and workers connect on boot, so wait for Postgres to accept
+    # connections rather than merely for the container to exist.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  api:
+    build: .
+    restart: unless-stopped
+    command: ["node", "dist/index.js"]
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      PORT: 3000
+      API_KEY: ${API_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Scale with: docker compose up -d --scale worker=3
+  #
+  # The explicit command is the point of this service. The image CMD starts the
+  # API, so without the override this container would run a second API and no
+  # job would ever execute.
   worker:
     build: .
     restart: unless-stopped
+    command: ["node", "dist/runWorker.js"]
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      JOB_DURATION_MS: ${JOB_DURATION_MS:-60000}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
 
 volumes:
   pgdata:

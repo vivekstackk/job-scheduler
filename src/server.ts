@@ -5,6 +5,20 @@ import { JobStore } from "./jobStore";
 import { JobRunStore } from "./jobRunStore";
 import { CreateJobInput } from "./types";
 import { UpdateJobInput } from "./jobStore";
+import { registerApiKeyAuth } from "./auth";
+
+// A comma-separated ALLOWED_ORIGINS locks the API to known frontends. Left
+// unset it reflects any origin, which keeps local development and the tests
+// working — but means a deployed API should always set it.
+function corsOrigin(): true | string[] {
+  const configured = process.env.ALLOWED_ORIGINS?.trim();
+  if (!configured) return true;
+
+  return configured
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
 
 export function buildServer() {
   const app = Fastify({
@@ -16,9 +30,13 @@ export function buildServer() {
 
   // Allow the deployed frontend to communicate with this API
   app.register(cors, {
-    origin: true,
+    origin: corsOrigin(),
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-api-key"],
   });
+
+  // Reads stay public; POST/PUT/DELETE require x-api-key once API_KEY is set.
+  registerApiKeyAuth(app);
 
   // Health check
   app.get("/health", async () => {

@@ -5,7 +5,12 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
+    "dev:worker": "ts-node src/runWorker.ts",
     "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "start:worker": "node dist/runWorker.js",
+    "migrate": "ts-node src/migrate.ts",
+    "migrate:prod": "node dist/migrate.js",
     "test": "jest --runInBand",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"

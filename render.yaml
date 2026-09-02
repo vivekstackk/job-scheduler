@@ -1,0 +1,87 @@
+# Render blueprint — infrastructure as code for this repo.
+#
+# Note: applying this creates NEW services. It does not reconfigure services
+# that were created by hand in the Render dashboard. If the API and site already
+# exist there, either rename these to match them exactly, or copy the env vars
+# and build commands below into the existing services' settings.
+
+databases:
+  - name: job-scheduler-db
+    databaseName: job_scheduler
+    user: scheduler
+    plan: free
+
+services:
+  # ---------------------------------------------------------------------------
+  # API. RUN_WORKER=true makes this process also poll for and execute due jobs.
+  #
+  # That is what a free plan needs: one service, both roles. Without it the API
+  # stores jobs with a correct next_run_at and nothing ever runs them, job_runs
+  # stays empty, and the dashboard's Logs page has nothing to show.
+  #
+  # On a paid plan, set RUN_WORKER=false here and uncomment the worker below —
+  # separate processes are the shape the SKIP LOCKED claim query exists for.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: job-scheduler-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: job-scheduler-db
+          property: connectionString
+      - key: RUN_WORKER
+        value: "true"
+      # Keeps every job from occupying a worker for the chaos test's 60s.
+      - key: JOB_DURATION_MS
+        value: "2000"
+      # Generated once by Render. Read the value in the dashboard and give the
+      # same one to the site's VITE_API_KEY below, or writes will 401.
+      - key: API_KEY
+        generateValue: true
+      # Restricts CORS to the dashboard. Update if the site URL changes.
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+  # ---------------------------------------------------------------------------
+  # Dedicated worker — paid plans only (Render has no free worker type).
+  # ---------------------------------------------------------------------------
+  # - type: worker
+  #   name: job-scheduler-worker
+  #   runtime: node
+  #   plan: starter
+  #   buildCommand: npm ci && npm run build
+  #   startCommand: npm run start:worker
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: job-scheduler-db
+  #         property: connectionString
+  #     - key: JOB_DURATION_MS
+  #       value: "2000"
+  #     - key: SKIP_MIGRATIONS
+  #       value: "true"
+
+  # ---------------------------------------------------------------------------
+  # Dashboard + landing page. The rewrite is required: the app uses
+  # BrowserRouter, so without it a refresh on /dashboard/logs returns 404.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: job-scheduler-web
+    runtime: static
+    buildCommand: npm --prefix web ci && npm --prefix web run build
+    staticPublishPath: ./web/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Same value as the API's generated API_KEY. Baked into the bundle at
+      # build time, so it is not a secret — it only stops drive-by writes from
+      # anyone who finds the API URL, which is what it is for.
+      - key: VITE_API_KEY
+        sync: false
