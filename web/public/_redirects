@@ -1,9 +1,10 @@
-# Render static-site SPA fallback.
+# SPA fallback for static hosts that read this file (Netlify, Cloudflare Pages).
 #
-# The dashboard uses BrowserRouter, so /dashboard/jobs is a client-side route
-# with no file behind it. Without this rule the static host answers a direct
-# load or a refresh with its own plain-text "Not Found" — which is exactly what
-# the deployed site was doing.
+# Render is not one of them. It takes rewrites from rules configured in its own
+# dashboard, or from a `routes:` block in an applied blueprint, and ignores this
+# file completely — which is why a direct load of /dashboard came back as the
+# host's plain-text "Not Found" while this sat in web/dist looking like a fix.
+# What works there is the per-route index.html emitted by web/vite.config.ts.
 #
 # 200 rather than a redirect: the URL the user typed has to stay in the address
 # bar for React Router to read it.
