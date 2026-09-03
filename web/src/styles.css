@@ -1925,6 +1925,29 @@ code {
   min-height: 320px;
 }
 
+/* Durations line up digit-for-digit so a slow run is visible by column
+   position, without having to read every value. */
+.numeric {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* An error message is arbitrary length — the handler appends a body excerpt.
+   Clamp the column so one bad response cannot push the rest of the row off
+   screen; the full text is on the cell's title attribute. */
+.reason-cell {
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
 .row-actions {
   display: flex;
   gap: var(--sp-2);
@@ -1975,6 +1998,128 @@ code {
   height: 7px;
   flex: none;
   background: var(--green);
+}
+
+/* =========================================================
+   CONSOLE — METRICS + API
+
+   Both pages are reference material: dense, quiet, and read
+   more than clicked. They reuse .surface and the table rules
+   above; only the prose and key/value blocks are new.
+========================================================= */
+
+/* Explanatory sentence under a panel title. Sits between the head and the
+   data it describes, so it takes the panel's own horizontal padding. */
+.panel-note {
+  margin: 0;
+  padding: var(--sp-4) var(--sp-5) 0;
+
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  max-width: 78ch;
+}
+
+.panel-note code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--ink-2);
+}
+
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--sp-5);
+
+  padding: var(--sp-5);
+}
+
+.fact-grid > div {
+  display: grid;
+  gap: var(--sp-2);
+  align-content: start;
+  min-width: 0;
+}
+
+.fact-grid span {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fact-grid code {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+
+  /* Base URLs and keys are long single tokens — let them wrap rather than
+     widen the grid column past the surface. */
+  overflow-wrap: anywhere;
+}
+
+.fact-grid small {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.code-block {
+  margin: var(--sp-4) var(--sp-5) var(--sp-5);
+  padding: var(--sp-4);
+
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper-2);
+
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.8;
+
+  /* A curl command is one long line by nature: scroll it rather than wrap it,
+     so it stays copy-pasteable. */
+  overflow-x: auto;
+}
+
+.dead-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-2) var(--sp-4);
+  align-items: baseline;
+
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.dead-row:last-child {
+  border-bottom: 0;
+}
+
+.dead-row b {
+  color: var(--ink);
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+
+.dead-row code {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  text-align: right;
+}
+
+/* The error text spans both columns on its own line — it is the reason the
+   job is here, so it should not be clipped into a corner. */
+.dead-row > span {
+  grid-column: 1 / -1;
+
+  color: #8b3527;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* =========================================================
@@ -2187,7 +2332,8 @@ code {
 }
 
 .form-sheet input,
-.form-sheet select {
+.form-sheet select,
+.form-sheet textarea {
   width: 100%;
   min-height: 46px;
 
@@ -2202,20 +2348,64 @@ code {
   font-size: var(--fs-base);
 }
 
-.form-sheet input::placeholder {
+/* Request headers and bodies are code, and they are pasted more often than
+   typed — monospace so a stray quote is visible, and resizable downward only
+   so the field cannot escape the sheet's width. */
+.form-sheet textarea {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.form-sheet input::placeholder,
+.form-sheet textarea::placeholder {
   color: var(--faint);
 }
 
 .form-sheet input:hover,
-.form-sheet select:hover {
+.form-sheet select:hover,
+.form-sheet textarea:hover {
   border-color: var(--muted);
 }
 
 .form-sheet input:focus-visible,
-.form-sheet select:focus-visible {
+.form-sheet select:focus-visible,
+.form-sheet textarea:focus-visible {
   border-color: var(--ink);
   outline: 2px solid var(--focus);
   outline-offset: 1px;
+}
+
+/* Method and timeout belong together: two short values that would each waste
+   a full row. Collapses to one column below the sheet's comfortable width. */
+.form-sheet .field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.form-sheet .field-row .field {
+  margin-top: var(--sp-5);
+}
+
+@media (max-width: 440px) {
+  .form-sheet .field-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+/* "optional" beside a label — same line, clearly subordinate. */
+.form-sheet label small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: var(--sp-2);
 }
 
 .field-hint {

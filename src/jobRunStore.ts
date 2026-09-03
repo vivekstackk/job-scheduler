@@ -52,4 +52,44 @@ export class JobRunStore {
     );
     return result.rows.map(toJobRun);
   }
+
+  /**
+   * Recent runs across every job, newest first.
+   *
+   * The dashboard's Runs and Logs pages need history for all jobs at once. They
+   * used to build it by fetching /jobs/:id/runs once per job — an N+1 that grew
+   * a request per job and, with a failure in any one of them swallowed, could
+   * render as "0 runs" while the data existed. One ordered query replaces it.
+   */
+  async listRecent(limit = 200): Promise<JobRun[]> {
+    const result = await pool.query<JobRunRow>(
+      `SELECT * FROM job_runs ORDER BY started_at DESC, attempt DESC LIMIT $1`,
+      [Math.min(Math.max(limit, 1), 1000)]
+    );
+    return result.rows.map(toJobRun);
+  }
+
+  /**
+   * Closes out rows left in 'running' by a worker that died mid-execution.
+   *
+   * complete() only ever runs in the same process that called start(), so a
+   * SIGKILL between the two leaves a row that claims to be running forever,
+   * with a null finished_at. The lease expiry lets another worker reclaim the
+   * job, and this is called at that moment: the previous attempt is known to be
+   * over, so it is recorded as failed rather than left lying.
+   *
+   * Scoped to one job because that is the one whose lease just expired —
+   * a blanket sweep would race with runs that are legitimately in flight
+   * elsewhere.
+   */
+  async failOrphaned(jobId: string, reason: string): Promise<number> {
+    const result = await pool.query(
+      `UPDATE job_runs
+       SET status = 'failed', finished_at = now(), error = $1
+       WHERE job_id = $2 AND status = 'running'`,
+      [reason, jobId]
+    );
+
+    return result.rowCount ?? 0;
+  }
 }

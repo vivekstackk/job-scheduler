@@ -9,6 +9,7 @@ describe("migration runner", () => {
     expect(files).toContain("001_create_jobs.sql");
     expect(files).toContain("002_create_job_runs.sql");
     expect(files).toContain("003_add_locking_columns.sql");
+    expect(files).toContain("004_add_indexes.sql");
   });
 
   it("orders migrations by filename so 002 never runs before 001", () => {
@@ -20,6 +21,10 @@ describe("migration runner", () => {
     );
     expect(files.indexOf("002_create_job_runs.sql")).toBeLessThan(
       files.indexOf("003_add_locking_columns.sql")
+    );
+    // 004 indexes columns that 001-003 create, including job_runs.started_at.
+    expect(files.indexOf("003_add_locking_columns.sql")).toBeLessThan(
+      files.indexOf("004_add_indexes.sql")
     );
   });
 

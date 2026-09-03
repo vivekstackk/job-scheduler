@@ -1,1 +1,10 @@
-/*    /index.html   200
+# Render static-site SPA fallback.
+#
+# The dashboard uses BrowserRouter, so /dashboard/jobs is a client-side route
+# with no file behind it. Without this rule the static host answers a direct
+# load or a refresh with its own plain-text "Not Found" — which is exactly what
+# the deployed site was doing.
+#
+# 200 rather than a redirect: the URL the user typed has to stay in the address
+# bar for React Router to read it.
+/*  /index.html  200

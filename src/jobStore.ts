@@ -76,8 +76,22 @@ export class JobStore {
     const existing = await this.get(id);
     if (!existing) return undefined;
 
-    const nextRunAt = changes.cronExpression
-      ? computeNextRun(changes.cronExpression)
+    const cronExpression = changes.cronExpression ?? existing.cronExpression;
+    const status = changes.status ?? existing.status;
+
+    // A new cron obviously invalidates the stored next_run_at. So does resuming:
+    // a job paused on Monday and resumed on Thursday still carried Monday's
+    // next_run_at, which is in the past, so the worker claimed it immediately
+    // and then fired again for every missed slot's worth of catch-up. Resuming
+    // means "start scheduling from now", so recompute from now.
+    //
+    // Anything else keeps the stored value — recomputing on an unrelated edit
+    // (a rename) would silently push the next fire time out.
+    const resumed = status === "active" && existing.status !== "active";
+    const recompute = changes.cronExpression !== undefined || resumed;
+
+    const nextRunAt = recompute
+      ? computeNextRun(cronExpression)
       : existing.nextRunAt;
 
     const result = await pool.query<JobRow>(
@@ -87,10 +101,10 @@ export class JobStore {
        RETURNING *`,
       [
         changes.name ?? existing.name,
-        changes.cronExpression ?? existing.cronExpression,
+        cronExpression,
         changes.handlerType ?? existing.handlerType,
         changes.payload ?? existing.payload,
-        changes.status ?? existing.status,
+        status,
         nextRunAt,
         id,
       ]

@@ -1,9 +1,21 @@
 # Render blueprint — infrastructure as code for this repo.
 #
-# Note: applying this creates NEW services. It does not reconfigure services
-# that were created by hand in the Render dashboard. If the API and site already
-# exist there, either rename these to match them exactly, or copy the env vars
-# and build commands below into the existing services' settings.
+# IMPORTANT: applying this creates NEW services. It does not reconfigure
+# services that were created by hand in the Render dashboard. The live
+# deployment of this project was created by hand, so everything below is
+# documentation of the required settings until the services are recreated from
+# the blueprint. docs/RENDER.md lists the same settings as dashboard steps.
+#
+# Two shapes are described here:
+#
+#   A. Two services (below, uncommented) — an API web service and a static
+#      site. This is what is deployed today.
+#   B. One service (commented, at the bottom) — the API process also serves the
+#      built dashboard. Fewer moving parts, one origin, no CORS.
+#
+# Both work. The routing fix for direct dashboard links is applied in both
+# places on purpose: web/public/_redirects covers shape A, and the SPA fallback
+# in src/server.ts covers shape B.
 
 databases:
   - name: job-scheduler-db
@@ -13,14 +25,16 @@ databases:
 
 services:
   # ---------------------------------------------------------------------------
-  # API. RUN_WORKER=true makes this process also poll for and execute due jobs.
+  # API + scheduler.
   #
-  # That is what a free plan needs: one service, both roles. Without it the API
-  # stores jobs with a correct next_run_at and nothing ever runs them, job_runs
-  # stays empty, and the dashboard's Logs page has nothing to show.
+  # One process, both roles. `npm start` runs migrations, listens on PORT, then
+  # starts the poll loop (src/index.ts).
   #
-  # On a paid plan, set RUN_WORKER=false here and uncomment the worker below —
-  # separate processes are the shape the SKIP LOCKED claim query exists for.
+  # RUN_WORKER is no longer required: a process that serves this API also
+  # executes due jobs unless RUN_WORKER=false. It is set here anyway so the
+  # intent is visible in the dashboard. Setting it to "false" without also
+  # running a dedicated worker means jobs are stored and never executed —
+  # job_runs stays empty and the Logs page has nothing to show.
   # ---------------------------------------------------------------------------
   - type: web
     name: job-scheduler-api
@@ -43,12 +57,17 @@ services:
       # same one to the site's VITE_API_KEY below, or writes will 401.
       - key: API_KEY
         generateValue: true
-      # Restricts CORS to the dashboard. Update if the site URL changes.
+      # Comma-separated list of frontend origins. Unset reflects any origin,
+      # which is fine locally and wrong in production — set it to the static
+      # site's URL, e.g. https://jobscheduler-150z.onrender.com
       - key: ALLOWED_ORIGINS
         sync: false
+      # Optional: WORKER_VERBOSE=true logs a line on every idle poll instead of
+      # one line per 30 idle polls. Useful once, noisy afterwards.
 
   # ---------------------------------------------------------------------------
   # Dedicated worker — paid plans only (Render has no free worker type).
+  # If this is enabled, set RUN_WORKER=false on the API above.
   # ---------------------------------------------------------------------------
   # - type: worker
   #   name: job-scheduler-worker
@@ -63,12 +82,21 @@ services:
   #         property: connectionString
   #     - key: JOB_DURATION_MS
   #       value: "2000"
+  #     # The API already migrates at boot; two migrators racing is safe (the
+  #     # runner takes an advisory lock) but pointless.
   #     - key: SKIP_MIGRATIONS
   #       value: "true"
 
   # ---------------------------------------------------------------------------
-  # Dashboard + landing page. The rewrite is required: the app uses
-  # BrowserRouter, so without it a refresh on /dashboard/logs returns 404.
+  # Dashboard + landing page (shape A).
+  #
+  # The rewrite is what makes a direct load or a refresh of /dashboard/jobs
+  # work: the app uses BrowserRouter, so no file exists at that path. Without
+  # it the static host answers with its own plain-text "Not Found", which is
+  # exactly what the deployed site did.
+  #
+  # web/public/_redirects carries the same rule, so a site created by hand in
+  # the dashboard (no blueprint, no routes block) is still fixed by a redeploy.
   # ---------------------------------------------------------------------------
   - type: web
     name: job-scheduler-web
@@ -80,8 +108,53 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      # The API origin, e.g. https://job-scheduler-j948.onrender.com — no
+      # trailing slash. Inlined by Vite at build time, so changing it requires
+      # a redeploy of this site, not just a restart. Unset falls back to the
+      # default in web/src/App.tsx.
+      - key: VITE_API_URL
+        sync: false
       # Same value as the API's generated API_KEY. Baked into the bundle at
       # build time, so it is not a secret — it only stops drive-by writes from
       # anyone who finds the API URL, which is what it is for.
       - key: VITE_API_KEY
         sync: false
+
+# -----------------------------------------------------------------------------
+# Shape B — one service serving the API, the scheduler and the dashboard.
+#
+# src/server.ts looks for web/dist/index.html and, when it finds it, serves the
+# static assets and answers unmatched GETs that accept text/html with
+# index.html. API paths (/jobs, /runs, /health, /api) always return JSON, so a
+# mistyped endpoint is still a 404 and never HTML.
+#
+# Replace both services above with:
+#
+#   - type: web
+#     name: job-scheduler
+#     runtime: node
+#     plan: free
+#     buildCommand: npm ci && npm run build && npm --prefix web ci && npm --prefix web run build
+#     startCommand: npm start
+#     healthCheckPath: /health
+#     envVars:
+#       - key: DATABASE_URL
+#         fromDatabase:
+#           name: job-scheduler-db
+#           property: connectionString
+#       - key: API_KEY
+#         generateValue: true
+#       # Same origin, so no CORS entry is needed. src/server.ts mounts the API
+#       # under /api as well as at the root, so set VITE_API_URL to "/api" and
+#       # the dashboard talks to its own host with no absolute URL to maintain.
+#       # (App.tsx only defaults to "/api" on localhost; on a deployed host it
+#       # falls back to a hardcoded API URL, so this value is what makes a fork
+#       # or a renamed service call itself instead of the original.)
+#       - key: VITE_API_URL
+#         value: /api
+#       - key: VITE_API_KEY
+#         sync: false
+#
+# SERVE_WEB=false forces API-only behaviour even when web/dist exists.
+# WEB_DIST_PATH overrides where the built dashboard is looked for.
+# -----------------------------------------------------------------------------

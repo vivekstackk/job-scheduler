@@ -90,10 +90,20 @@ async function api<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
+  // Only declare a JSON body when there is one to declare. A bodyless DELETE
+  // sent with Content-Type: application/json is rejected by a strict JSON
+  // parser before it reaches the route — which is exactly how the delete button
+  // failed: the row stayed put and the message was "Body cannot be empty when
+  // content-type is set to 'application/json'".
+  const hasBody =
+    options?.body !== undefined && options?.body !== null;
+
   const response = await fetch(`${API}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(hasBody
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(API_KEY ? { "x-api-key": API_KEY } : {}),
       ...(options?.headers || {}),
     },
@@ -717,12 +727,16 @@ function Landing() {
   );
 }
 
+// Has to stay a request the API would actually accept: an http job is
+// validated against validateHttpPayload, which requires an absolute url.
 const CREATE_JOB_SNIPPET = `{
   "name": "daily-report",
   "cronExpression": "0 9 * * *",
   "handlerType": "http",
   "payload": {
-    "endpoint": "/reports/daily"
+    "url": "https://api.example.com/reports/daily",
+    "method": "POST",
+    "timeoutMs": 10000
   }
 }`;
 
@@ -787,11 +801,17 @@ function Guarantee({
    DASHBOARD
 --------------------------------------------------------- */
 
+// Every client route the dashboard renders, so the breadcrumb names the page
+// the user is actually on. A path missing from this map fell back to
+// "Overview", which is how /dashboard/metrics used to read as "Overview"
+// while showing metrics.
 const CRUMBS: Record<string, string> = {
   "/": "Overview",
   "/jobs": "Jobs",
   "/runs": "Runs",
   "/schedules": "Schedules",
+  "/metrics": "Metrics",
+  "/api": "API",
   "/logs": "Logs",
   "/settings": "Settings",
 };
@@ -804,6 +824,13 @@ function Dashboard() {
   const [online, setOnline] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Kept apart from `error` on purpose. loadDashboard() clears `error` on every
+  // tick, so a failed pause or delete used to be wiped by the next poll — and it
+  // rendered under the "API connection error" heading with a Retry button that
+  // re-read the dashboard instead of retrying the action. This one says what did
+  // not happen and stays until the user dismisses it.
+  const [actionError, setActionError] = useState("");
 
   const location = useLocation();
   const preferences = usePrefs();
@@ -821,25 +848,12 @@ function Dashboard() {
       const loadedJobs = await api<Job[]>("/jobs");
       setJobs(loadedJobs);
 
-      const jobRuns = await Promise.all(
-        loadedJobs.map(async (job) => {
-          try {
-            return await api<JobRun[]>(`/jobs/${job.id}/runs`);
-          } catch {
-            return [];
-          }
-        })
-      );
-
-      setRuns(
-        jobRuns
-          .flat()
-          .sort(
-            (a, b) =>
-              new Date(b.startedAt).getTime() -
-              new Date(a.startedAt).getTime()
-          )
-      );
+      // One request for all run history, ordered by the database. This used to
+      // be a fetch per job with a `catch { return [] }` around each one, so a
+      // single failing request silently became "no runs for that job" — the
+      // page could not tell an empty history from a failed read.
+      const loadedRuns = await api<JobRun[]>("/runs?limit=500");
+      setRuns(loadedRuns);
     } catch (err) {
       setOnline(false);
       setError(
@@ -886,6 +900,8 @@ function Dashboard() {
 
     const previous = jobs;
 
+    setActionError("");
+
     setJobs((current) =>
       current.map((item) =>
         item.id === job.id
@@ -907,10 +923,12 @@ function Dashboard() {
       );
     } catch (err) {
       setJobs(previous);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to update job"
+      setActionError(
+        `Could not ${
+          nextStatus === "paused" ? "pause" : "resume"
+        } ${job.name}: ${
+          err instanceof Error ? err.message : "request failed"
+        }`
       );
     }
   }
@@ -943,7 +961,8 @@ function Dashboard() {
     return updated;
   }
 
-  async function createJob(input: {    name: string;
+  async function createJob(input: {
+    name: string;
     cronExpression: string;
     handlerType: string;
     payload?: Record<string, unknown>;
@@ -954,10 +973,21 @@ function Dashboard() {
     });
 
     setJobs((current) => [created, ...current]);
+
+    // A job created with a one-minute cron produces its first run within the
+    // minute. Re-reading now (rather than waiting for the next poll tick, which
+    // can be 30s away) is what makes Runs and Logs fill in promptly.
+    loadDashboard();
+
     return created;
   }
 
   async function deleteJob(id: string) {
+    const name =
+      jobs.find((job) => job.id === id)?.name ?? "job";
+
+    setActionError("");
+
     try {
       await api<void>(`/jobs/${id}`, {
         method: "DELETE",
@@ -971,10 +1001,10 @@ function Dashboard() {
         current.filter((run) => run.jobId !== id)
       );
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to delete job"
+      setActionError(
+        `Could not delete ${name}: ${
+          err instanceof Error ? err.message : "request failed"
+        }`
       );
     }
   }
@@ -1052,20 +1082,20 @@ function Dashboard() {
             close={() => setMobileOpen(false)}
           />
           <SideLink
-            to="/dashboard"
+            to="/dashboard/metrics"
             icon={<BarChart3 aria-hidden="true" />}
             label="Metrics"
-            active={false}
+            active={path === "/metrics"}
             close={() => setMobileOpen(false)}
           />
         </SideSection>
 
         <SideSection label="DEVELOPER">
           <SideLink
-            to="/dashboard"
+            to="/dashboard/api"
             icon={<Code2 aria-hidden="true" />}
             label="API"
-            active={false}
+            active={path === "/api"}
             close={() => setMobileOpen(false)}
           />
           <SideLink
@@ -1176,6 +1206,18 @@ function Dashboard() {
           </div>
         )}
 
+        {actionError && (
+          <div className="api-error" role="alert">
+            <span>{actionError}</span>
+            <button
+              type="button"
+              onClick={() => setActionError("")}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div
             className="console-loading"
@@ -1205,6 +1247,10 @@ function Dashboard() {
             search={search}
             updateJob={updateJob}
           />
+        ) : path === "/metrics" ? (
+          <MetricsPage jobs={jobs} runs={runs} />
+        ) : path === "/api" ? (
+          <ApiPage />
         ) : path === "/logs" ? (
           <LogsPage jobs={jobs} runs={runs} search={search} />
         ) : path === "/settings" ? (
@@ -1359,9 +1405,17 @@ function OverviewPage({
         />
 
         <Metric
-          label="Workers"
-          value="3"
-          note="all healthy"
+          label="Success rate"
+          value={
+            runs.length === 0
+              ? "—"
+              : `${Math.round((successful / runs.length) * 100)}%`
+          }
+          note={
+            runs.length === 0
+              ? "no runs recorded yet"
+              : `across ${runs.length} attempts`
+          }
         />
 
       </div>
@@ -1375,7 +1429,7 @@ function OverviewPage({
             right="LAST 24 HOURS"
           />
 
-          <ActivityChart />
+          <ActivityChart runs={runs} />
 
         </section>
 
@@ -1538,41 +1592,121 @@ function PanelTitle({
   );
 }
 
-function ActivityChart() {
+/**
+ * Buckets runs into the last 24 hours, oldest bucket first.
+ *
+ * Hour boundaries come from the browser clock so the axis matches the
+ * timestamps shown elsewhere on the page.
+ */
+function hourlyBuckets(runs: JobRun[]) {
+  const now = new Date();
+  const top = new Date(now);
+  top.setMinutes(0, 0, 0);
+
+  const buckets = Array.from({ length: 24 }, (_, index) => {
+    const at = new Date(top);
+    at.setHours(top.getHours() - (23 - index));
+
+    return { at, success: 0, failed: 0, running: 0 };
+  });
+
+  const first = buckets[0].at.getTime();
+
+  for (const run of runs) {
+    const started = new Date(run.startedAt).getTime();
+    if (!Number.isFinite(started) || started < first) continue;
+
+    const index = Math.min(
+      23,
+      Math.floor((started - first) / 3600000)
+    );
+
+    if (index < 0) continue;
+
+    buckets[index][run.status] += 1;
+  }
+
+  return buckets;
+}
+
+function ActivityChart({ runs }: { runs: JobRun[] }) {
+  const buckets = hourlyBuckets(runs);
+
+  const total = buckets.reduce(
+    (sum, bucket) => sum + bucket.success + bucket.failed,
+    0
+  );
+
+  // A flat line at zero is indistinguishable from a broken chart, so an empty
+  // history says so in words instead of drawing nothing.
+  if (total === 0) {
+    return (
+      <div className="activity-chart">
+        <div className="empty-state">
+          No runs in the last 24 hours. The chart fills in as the worker
+          executes scheduled jobs.
+        </div>
+      </div>
+    );
+  }
+
+  const peak = Math.max(
+    ...buckets.map((bucket) =>
+      Math.max(bucket.success, bucket.failed)
+    ),
+    1
+  );
+
+  // viewBox units, matching the grid lines below.
+  const width = 700;
+  const height = 190;
+  const floor = 166;
+  const ceiling = 20;
+
+  const points = (pick: (bucket: (typeof buckets)[number]) => number) =>
+    buckets
+      .map((bucket, index) => {
+        const x = (index / (buckets.length - 1)) * width;
+        const y =
+          floor - (pick(bucket) / peak) * (floor - ceiling);
+
+        return `${Math.round(x)},${Math.round(y)}`;
+      })
+      .join(" ");
+
+  const failed = buckets.reduce(
+    (sum, bucket) => sum + bucket.failed,
+    0
+  );
+
+  const label = (bucket: (typeof buckets)[number]) =>
+    `${pad(bucket.at.getHours())}:00`;
+
   return (
     <div className="activity-chart">
-
       <svg
-        viewBox="0 0 700 190"
+        viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label="Line chart of successful and failed executions over the last 24 hours. Successful runs trend upward; failures stay near zero with two small spikes."
+        aria-label={`Hourly executions over the last 24 hours: ${total} runs, ${failed} of them failed. Busiest hour had ${peak}.`}
       >
-
         {[35, 75, 115, 155].map((y) => (
-          <line
-            key={y}
-            x1="0"
-            x2="700"
-            y1={y}
-            y2={y}
-          />
+          <line key={y} x1="0" x2={width} y1={y} y2={y} />
         ))}
 
-        <polyline points="0,145 30,132 60,137 90,104 120,112 150,78 180,94 210,60 240,86 270,48 300,70 330,54 360,82 390,39 420,63 450,46 480,92 510,57 540,69 570,33 600,58 630,43 660,72 700,50" />
+        <polyline points={points((bucket) => bucket.success)} />
 
         <polyline
           className="failure-line"
-          points="0,166 70,166 140,166 210,166 280,166 350,166 420,166 490,151 560,166 630,138 700,166"
+          points={points((bucket) => bucket.failed)}
         />
-
       </svg>
 
       <div className="axis">
-        <span>00:00</span>
-        <span>06:00</span>
-        <span>12:00</span>
-        <span>18:00</span>
+        <span>{label(buckets[0])}</span>
+        <span>{label(buckets[6])}</span>
+        <span>{label(buckets[12])}</span>
+        <span>{label(buckets[18])}</span>
         <span>NOW</span>
       </div>
 
@@ -1587,7 +1721,6 @@ function ActivityChart() {
           Failed runs
         </span>
       </div>
-
     </div>
   );
 }
@@ -1680,9 +1813,7 @@ function JobTable({
               </td>
 
               <td>
-                {job.nextRunAt
-                  ? relative(job.nextRunAt)
-                  : "—"}
+                {nextRunLabel(job, relative)}
               </td>
 
             </tr>
@@ -1801,8 +1932,20 @@ function JobsPage({
   const [cron, setCron] = useState("0 9 * * *");
   const [handlerType, setHandlerType] =
     useState("http");
+  // An http job is a request, so the form has to collect one. Before this the
+  // dialog sent `payload: {}` and every created job had nothing to call.
+  const [url, setUrl] = useState("");
+  const [method, setMethod] = useState("GET");
+  const [timeoutMs, setTimeoutMs] = useState("10000");
+  const [headers, setHeaders] = useState("");
+  const [requestBody, setRequestBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // Kept in step with HTTP_HANDLERS in src/validation.ts — these are the two
+  // handler types the API requires a url for.
+  const needsUrl = handlerType === "http" || handlerType === "webhook";
+  const allowsBody = method !== "GET" && method !== "HEAD";
 
   const confirmSheet = useDialog<HTMLDivElement>(
     confirmDelete !== null,
@@ -1836,23 +1979,92 @@ function JobsPage({
       (filter === "all" || job.status === filter)
   );
 
+  /**
+   * Assembles the payload the http handler reads at execution time.
+   *
+   * Returns a string on failure so the dialog can explain the problem without
+   * a round trip. Everything it does build is checked again by the API — this
+   * is a convenience, not the validation boundary.
+   */
+  function buildPayload():
+    | { payload: Record<string, unknown> }
+    | { error: string } {
+    if (!needsUrl) return { payload: {} };
+
+    if (!url.trim()) {
+      return {
+        error:
+          `A ${handlerType} job calls a URL — enter the endpoint the ` +
+          "worker should request.",
+      };
+    }
+
+    const payload: Record<string, unknown> = {
+      url: url.trim(),
+      method,
+      timeoutMs: Number(timeoutMs),
+    };
+
+    if (headers.trim()) {
+      try {
+        const decoded: unknown = JSON.parse(headers);
+
+        if (
+          typeof decoded !== "object" ||
+          decoded === null ||
+          Array.isArray(decoded)
+        ) {
+          throw new Error("not an object");
+        }
+
+        payload.headers = decoded;
+      } catch {
+        return {
+          error:
+            'Headers must be a JSON object, e.g. {"authorization": "Bearer abc"}.',
+        };
+      }
+    }
+
+    // The API rejects a body on GET/HEAD, so don't send one the user cannot
+    // see: the field is hidden for those methods.
+    if (allowsBody && requestBody.trim()) {
+      payload.body = requestBody;
+    }
+
+    return { payload };
+  }
+
   async function create() {
     if (!name.trim()) return;
 
-    setSaving(true);
     setFormError("");
+
+    const built = buildPayload();
+
+    if ("error" in built) {
+      setFormError(built.error);
+      return;
+    }
+
+    setSaving(true);
 
     try {
       await createJob({
         name: name.trim(),
         cronExpression: cron.trim(),
         handlerType,
-        payload: {},
+        payload: built.payload,
       });
 
       setName("");
       setCron("0 9 * * *");
       setHandlerType("http");
+      setUrl("");
+      setMethod("GET");
+      setTimeoutMs("10000");
+      setHeaders("");
+      setRequestBody("");
       setOpen(false);
     } catch (err) {
       setFormError(
@@ -1970,9 +2182,7 @@ function JobsPage({
                   </td>
 
                   <td>
-                    {job.nextRunAt
-                      ? relative(job.nextRunAt)
-                      : "—"}
+                    {nextRunLabel(job, relative)}
                   </td>
 
                   <td>
@@ -2200,8 +2410,8 @@ function JobsPage({
                 <option value="webhook">
                   webhook
                 </option>
-                <option value="worker">
-                  worker
+                <option value="noop">
+                  noop
                 </option>
               </select>
 
@@ -2209,9 +2419,149 @@ function JobsPage({
                 className="field-hint"
                 id="job-handler-hint"
               >
-                How the worker executes this job.
+                {needsUrl
+                  ? "The worker sends one request per run and records the response status."
+                  : "noop records a run without calling anything — useful for testing the schedule."}
               </span>
             </div>
+
+            {needsUrl && (
+              <>
+                <div className="field">
+                  <label htmlFor="job-url">
+                    Request URL
+                  </label>
+
+                  <input
+                    id="job-url"
+                    type="url"
+                    value={url}
+                    onChange={(event) =>
+                      setUrl(event.target.value)
+                    }
+                    placeholder="https://api.example.com/tasks/refresh"
+                    aria-describedby="job-url-hint"
+                    autoComplete="off"
+                    required
+                  />
+
+                  <span
+                    className="field-hint"
+                    id="job-url-hint"
+                  >
+                    Absolute http or https URL. This is what the worker calls.
+                  </span>
+                </div>
+
+                <div className="field-row">
+                  <div className="field">
+                    <label htmlFor="job-method">
+                      Method
+                    </label>
+
+                    <select
+                      id="job-method"
+                      value={method}
+                      onChange={(event) =>
+                        setMethod(event.target.value)
+                      }
+                    >
+                      {[
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "PATCH",
+                        "DELETE",
+                        "HEAD",
+                        "OPTIONS",
+                      ].map((verb) => (
+                        <option key={verb} value={verb}>
+                          {verb}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="job-timeout">
+                      Timeout (ms)
+                    </label>
+
+                    <input
+                      id="job-timeout"
+                      type="number"
+                      min={1}
+                      max={120000}
+                      step={500}
+                      value={timeoutMs}
+                      onChange={(event) =>
+                        setTimeoutMs(event.target.value)
+                      }
+                      aria-describedby="job-timeout-hint"
+                    />
+
+                    <span
+                      className="field-hint"
+                      id="job-timeout-hint"
+                    >
+                      Aborts the request and fails the run. Max 120000.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="job-headers">
+                    Headers <small>optional</small>
+                  </label>
+
+                  <textarea
+                    id="job-headers"
+                    rows={2}
+                    value={headers}
+                    onChange={(event) =>
+                      setHeaders(event.target.value)
+                    }
+                    placeholder={'{"authorization": "Bearer abc"}'}
+                    aria-describedby="job-headers-hint"
+                    spellCheck={false}
+                  />
+
+                  <span
+                    className="field-hint"
+                    id="job-headers-hint"
+                  >
+                    A JSON object of string values. Leave empty for none.
+                  </span>
+                </div>
+
+                {allowsBody && (
+                  <div className="field">
+                    <label htmlFor="job-body">
+                      Body <small>optional</small>
+                    </label>
+
+                    <textarea
+                      id="job-body"
+                      rows={3}
+                      value={requestBody}
+                      onChange={(event) =>
+                        setRequestBody(event.target.value)
+                      }
+                      placeholder={'{"source": "scheduler"}'}
+                      aria-describedby="job-body-hint"
+                      spellCheck={false}
+                    />
+
+                    <span
+                      className="field-hint"
+                      id="job-body-hint"
+                    >
+                      Sent verbatim. Set a content-type header to match it.
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
 
             {formError && (
               <p className="form-error" role="alert">
@@ -2231,7 +2581,11 @@ function JobsPage({
               <button
                 type="submit"
                 className="solid-button"
-                disabled={saving || !name.trim()}
+                disabled={
+                  saving ||
+                  !name.trim() ||
+                  (needsUrl && !url.trim())
+                }
               >
                 {saving ? "Creating…" : "Create job"}
                 {!saving && (
@@ -2313,8 +2667,12 @@ function RunsPage({
           </button>
         ))}
 
+        {/* "12 runs" next to an active filter reads as the whole history, so a
+            filtered count always names the total it was taken from. */}
         <span aria-live="polite">
-          {filtered.length} runs
+          {filter === "all"
+            ? `${filtered.length} runs`
+            : `${filtered.length} of ${runs.length} runs`}
         </span>
       </div>
 
@@ -2333,43 +2691,91 @@ function RunsPage({
                 <th scope="col">ATTEMPT</th>
                 <th scope="col">STARTED</th>
                 <th scope="col">ENDED</th>
+                <th scope="col">TOOK</th>
+                <th scope="col">RESULT</th>
               </tr>
             </thead>
 
             <tbody>
-              {filtered.map((run) => (
-                <tr key={run.id}>
-                  <td>
-                    <Status status={run.status} />
-                  </td>
-                  <td>
-                    <code>{run.id}</code>
-                  </td>
-                  <td>
-                    {jobs.find(
-                      (job) => job.id === run.jobId
-                    )?.name || "unknown"}
-                  </td>
-                  <td>{run.attempt}</td>
-                  <td>{date(run.startedAt)}</td>
-                  <td>
-                    {run.finishedAt
-                      ? date(run.finishedAt)
-                      : "Running"}
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((run) => {
+                const took = duration(
+                  run.startedAt,
+                  run.finishedAt
+                );
+
+                return (
+                  <tr key={run.id}>
+                    <td>
+                      <Status status={run.status} />
+                    </td>
+                    <td>
+                      <code>{run.id}</code>
+                    </td>
+                    <td>
+                      {jobs.find(
+                        (job) => job.id === run.jobId
+                      )?.name || "unknown"}
+                    </td>
+                    <td>{run.attempt}</td>
+                    <td>{date(run.startedAt)}</td>
+                    <td>
+                      {run.finishedAt
+                        ? date(run.finishedAt)
+                        : "Running"}
+                    </td>
+                    <td className="numeric">
+                      {took === null
+                        ? "—"
+                        : humanDuration(took)}
+                    </td>
+                    {/* The reason a run failed was previously only visible in
+                        Logs, so this table showed a red dot and nothing to act
+                        on. The full text stays available on hover. */}
+                    <td
+                      className="reason-cell"
+                      title={run.error ?? undefined}
+                    >
+                      {run.error ? (
+                        <span className="danger-text">
+                          {run.error}
+                        </span>
+                      ) : run.status === "success" ? (
+                        "OK"
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
 
+        {/* A status filter with no matches is not an empty history. Saying "no
+            execution history yet" here told the user their runs were gone when
+            they were one click away — the same distinction the Jobs, Schedules
+            and Logs pages already make. */}
         {filtered.length === 0 && (
           <div className="empty-state">
-            <b>No execution history yet.</b>
-            <span>
-              Runs appear here as soon as a scheduled job
-              fires.
-            </span>
+            {runs.length === 0 ? (
+              <>
+                <b>No execution history yet.</b>
+                <span>
+                  Runs appear here as soon as a scheduled job
+                  fires.
+                </span>
+              </>
+            ) : (
+              <>
+                <b>No {filter} runs in this history.</b>
+                <span>
+                  {runs.length} run
+                  {runs.length === 1 ? "" : "s"} recorded — switch
+                  back to All runs to see them.
+                </span>
+              </>
+            )}
           </div>
         )}
       </section>
@@ -2718,7 +3124,7 @@ function ScheduleCard({
         <div>
           <dt>NEXT RUN</dt>
           <dd>
-            {job.nextRunAt ? date(job.nextRunAt) : "Not scheduled"}
+            {nextRunLabel(job, date)}
           </dd>
         </div>
       </dl>
@@ -2864,6 +3270,513 @@ function ScheduleCard({
         </form>
       )}
     </article>
+  );
+}
+
+/* ---------------------------------------------------------
+   METRICS
+
+   Everything here is computed from the jobs and runs already
+   loaded from the API. There is no metrics endpoint and no
+   sampled data — the window is exactly the run history the
+   dashboard fetched (/runs?limit=500).
+--------------------------------------------------------- */
+
+/** Percentile over an unsorted list of durations, nearest-rank. */
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)
+  );
+
+  return sorted[index];
+}
+
+type JobMetrics = {
+  job: Job;
+  total: number;
+  success: number;
+  failed: number;
+  running: number;
+  durations: number[];
+  lastRun: JobRun | null;
+};
+
+function perJobMetrics(jobs: Job[], runs: JobRun[]): JobMetrics[] {
+  const rows = new Map<string, JobMetrics>(
+    jobs.map((job) => [
+      job.id,
+      {
+        job,
+        total: 0,
+        success: 0,
+        failed: 0,
+        running: 0,
+        durations: [],
+        lastRun: null,
+      },
+    ])
+  );
+
+  for (const run of runs) {
+    const row = rows.get(run.jobId);
+
+    // A run whose job has been deleted still exists in history if the delete
+    // did not cascade; skip it rather than inventing a row for it.
+    if (!row) continue;
+
+    row.total += 1;
+    row[run.status] += 1;
+
+    const took = duration(run.startedAt, run.finishedAt);
+    if (took !== null) row.durations.push(took);
+
+    // /runs comes back newest first, so the first one seen is the latest.
+    if (!row.lastRun) row.lastRun = run;
+  }
+
+  return [...rows.values()].sort((a, b) => b.total - a.total);
+}
+
+function MetricsPage({
+  jobs,
+  runs,
+}: {
+  jobs: Job[];
+  runs: JobRun[];
+}) {
+  const success = runs.filter(
+    (run) => run.status === "success"
+  ).length;
+
+  const failed = runs.filter(
+    (run) => run.status === "failed"
+  ).length;
+
+  const running = runs.filter(
+    (run) => run.status === "running"
+  ).length;
+
+  const finished = runs
+    .map((run) => duration(run.startedAt, run.finishedAt))
+    .filter((ms): ms is number => ms !== null);
+
+  const p50 = percentile(finished, 50);
+  const p95 = percentile(finished, 95);
+  const slowest = finished.length
+    ? Math.max(...finished)
+    : null;
+
+  const rate =
+    runs.length === 0
+      ? null
+      : Math.round((success / runs.length) * 100);
+
+  // Attempt 2 or 3 only exists because attempt 1 failed, so this is the
+  // retry budget being spent — worth seeing on its own.
+  const retries = runs.filter((run) => run.attempt > 1).length;
+
+  const perJob = perJobMetrics(jobs, runs);
+  const dead = jobs.filter(
+    (job) => job.status === "dead_letter"
+  );
+
+  return (
+    <main className="console-page" id="main">
+      <PageHead
+        eyebrow="MANAGE"
+        title="Metrics"
+        description="Execution outcomes and latency, computed from stored run history."
+        action={
+          <div className="live-label">
+            <i aria-hidden="true" />
+            {runs.length} RUNS IN WINDOW
+          </div>
+        }
+      />
+
+      <div className="metric-strip">
+        <Metric
+          label="Success rate"
+          value={rate === null ? "—" : `${rate}%`}
+          note={
+            runs.length === 0
+              ? "no runs recorded yet"
+              : `${success} of ${runs.length} attempts`
+          }
+        />
+
+        <Metric
+          label="Failures"
+          value={failed}
+          note={
+            retries === 0
+              ? "no retries so far"
+              : `${retries} retry attempts`
+          }
+          danger
+        />
+
+        <Metric
+          label="Median duration"
+          value={p50 === null ? "—" : humanDuration(p50)}
+          note={
+            p95 === null
+              ? "waiting for finished runs"
+              : `p95 ${humanDuration(p95)}`
+          }
+        />
+
+        <Metric
+          label="In flight"
+          value={running}
+          note={
+            slowest === null
+              ? "nothing finished yet"
+              : `slowest ${humanDuration(slowest)}`
+          }
+        />
+      </div>
+
+      <section className="surface table-surface">
+        <PanelTitle
+          title="Per job"
+          right="ALL LOADED RUNS"
+          heading
+        />
+
+        <div className="table-scroll">
+          <table>
+            <caption className="sr-only">
+              Execution outcomes and latency for each job
+            </caption>
+
+            <thead>
+              <tr>
+                <th scope="col">JOB</th>
+                <th scope="col">HANDLER</th>
+                <th scope="col">RUNS</th>
+                <th scope="col">OK</th>
+                <th scope="col">FAILED</th>
+                <th scope="col">RATE</th>
+                <th scope="col">MEDIAN</th>
+                <th scope="col">LAST RUN</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {perJob.map((row) => {
+                const median = percentile(row.durations, 50);
+
+                return (
+                  <tr key={row.job.id}>
+                    <td>
+                      <Link
+                        to={`/dashboard/jobs/${row.job.id}`}
+                        className="job-cell"
+                      >
+                        <i
+                          aria-hidden="true"
+                          className={
+                            row.job.status === "active"
+                              ? "green"
+                              : row.job.status ===
+                                  "dead_letter"
+                                ? "red"
+                                : "gray"
+                          }
+                        />
+                        {row.job.name}
+                      </Link>
+                    </td>
+                    <td>
+                      <code>{row.job.handlerType}</code>
+                    </td>
+                    <td className="numeric">{row.total}</td>
+                    <td className="numeric">
+                      {row.success}
+                    </td>
+                    <td className="numeric">
+                      {row.failed > 0 ? (
+                        <span className="danger-text">
+                          {row.failed}
+                        </span>
+                      ) : (
+                        0
+                      )}
+                    </td>
+                    <td className="numeric">
+                      {row.total === 0
+                        ? "—"
+                        : `${Math.round(
+                            (row.success / row.total) * 100
+                          )}%`}
+                    </td>
+                    <td className="numeric">
+                      {median === null
+                        ? "—"
+                        : humanDuration(median)}
+                    </td>
+                    <td>
+                      {row.lastRun
+                        ? date(row.lastRun.startedAt)
+                        : "never"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {perJob.length === 0 && (
+          <div className="empty-state">
+            <b>No jobs registered.</b>
+            <span>
+              Create a job and its metrics appear here after the
+              first run.
+            </span>
+          </div>
+        )}
+      </section>
+
+      {dead.length > 0 && (
+        <section className="surface">
+          <PanelTitle
+            title="Dead letter"
+            right={`${dead.length} JOB${dead.length === 1 ? "" : "S"}`}
+            heading
+          />
+
+          <p className="panel-note">
+            executor.ts moves a job here after three failed attempts. It stops
+            being claimed until something sets its status back to active — the
+            Settings page has a recover action.
+          </p>
+
+          <div className="run-table">
+            {dead.map((job) => {
+              const row = perJob.find(
+                (entry) => entry.job.id === job.id
+              );
+
+              return (
+                <div className="dead-row" key={job.id}>
+                  <b>{job.name}</b>
+
+                  <code>{job.cronExpression}</code>
+
+                  <span>
+                    {row?.lastRun?.error ??
+                      "no error recorded in the loaded window"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+    </main>
+  );
+}
+
+/* ---------------------------------------------------------
+   API
+
+   A reference for the service this dashboard talks to. The
+   base URL and auth state are read from the live build, not
+   written down — a preview deployment shows its own values.
+--------------------------------------------------------- */
+
+const ERROR_CONTRACT: {
+  status: string;
+  meaning: string;
+  example: string;
+}[] = [
+  {
+    status: "400",
+    meaning: "The request was understood and rejected.",
+    example:
+      'cronExpression "* *" is not a valid cron / payload.url is required',
+  },
+  {
+    status: "401",
+    meaning: "A write without a valid x-api-key, once API_KEY is set.",
+    example: "missing x-api-key header",
+  },
+  {
+    status: "404",
+    meaning: "No job with that id, or an unknown API path.",
+    example: "job not found",
+  },
+  {
+    status: "409",
+    meaning: "The request conflicts with stored state.",
+    example: "a record with that value already exists",
+  },
+  {
+    status: "500",
+    meaning:
+      "A genuine bug. The stack is logged server-side; the response carries only a request id.",
+    example: '{ "error": "internal server error", "requestId": "req-42" }',
+  },
+];
+
+function ApiPage() {
+  const base = API.startsWith("/")
+    ? `${window.location.origin}${API}`
+    : API;
+
+  return (
+    <main className="console-page" id="main">
+      <PageHead
+        eyebrow="DEVELOPER"
+        title="API"
+        description="The HTTP surface behind this dashboard, and what its errors mean."
+        action={
+          <a
+            className="outline-button"
+            href={`${base}/health`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open /health
+            <ArrowRight size={15} aria-hidden="true" />
+          </a>
+        }
+      />
+
+      <section className="surface">
+        <PanelTitle title="Connection" right="THIS BUILD" heading />
+
+        <div className="fact-grid">
+          <div>
+            <span>Base URL</span>
+            <code>{base}</code>
+            <small>
+              VITE_API_URL at build time, else "/api" on localhost — answered
+              by the Vite proxy in dev, or by the API itself when one process
+              serves both.
+            </small>
+          </div>
+
+          <div>
+            <span>Write auth</span>
+            <code>{API_KEY ? "x-api-key sent" : "read-only"}</code>
+            <small>
+              {API_KEY
+                ? "This build has VITE_API_KEY, so POST/PUT/DELETE are signed."
+                : "No VITE_API_KEY in this build — writes fail if the API sets API_KEY."}
+            </small>
+          </div>
+
+          <div>
+            <span>Reads</span>
+            <code>public</code>
+            <small>
+              GET never requires a key, which is what keeps /health usable as a
+              probe.
+            </small>
+          </div>
+        </div>
+      </section>
+
+      <section className="surface table-surface">
+        <PanelTitle title="Endpoints" right="REST" heading />
+
+        <div className="table-scroll">
+          <table>
+            <caption className="sr-only">
+              Available API endpoints
+            </caption>
+
+            <thead>
+              <tr>
+                <th scope="col">METHOD</th>
+                <th scope="col">PATH</th>
+                <th scope="col">NOTE</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {ENDPOINTS.map((endpoint) => (
+                <tr key={`${endpoint.method} ${endpoint.path}`}>
+                  <td>
+                    <code>{endpoint.method}</code>
+                  </td>
+                  <td>
+                    <code>{endpoint.path}</code>
+                  </td>
+                  <td>{endpoint.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="surface">
+        <PanelTitle title="Errors" right="CONTRACT" heading />
+
+        <p className="panel-note">
+          Every failure returns <code>{`{ "error": "..." }`}</code>. A
+          validation failure adds <code>details</code> when more than one field
+          is wrong. Stack traces stay in the server log.
+        </p>
+
+        <div className="table-scroll">
+          <table>
+            <caption className="sr-only">
+              What each status code means
+            </caption>
+
+            <thead>
+              <tr>
+                <th scope="col">STATUS</th>
+                <th scope="col">MEANING</th>
+                <th scope="col">EXAMPLE</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {ERROR_CONTRACT.map((entry) => (
+                <tr key={entry.status}>
+                  <td>
+                    <code>{entry.status}</code>
+                  </td>
+                  <td>{entry.meaning}</td>
+                  <td className="reason-cell" title={entry.example}>
+                    {entry.example}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="surface">
+        <PanelTitle title="Create a job" right="CURL" heading />
+
+        <p className="panel-note">
+          An <code>http</code> or <code>webhook</code> job is validated against
+          <code>validateHttpPayload</code>: an absolute http/https URL is
+          required, the method must be a standard verb, headers must be string
+          values, and <code>timeoutMs</code> must be 1–120000. A{" "}
+          <code>noop</code> job needs no payload.
+        </p>
+
+        <pre className="code-block">
+          <code>{`curl -X POST ${base}/jobs \\
+  -H 'content-type: application/json' \\
+  -H 'x-api-key: <your key>' \\
+  -d '${CREATE_JOB_SNIPPET.replace(/\n\s*/g, " ")}'`}</code>
+        </pre>
+      </section>
+    </main>
   );
 }
 
@@ -3357,6 +4270,11 @@ const ENDPOINTS: { method: string; path: string; note: string }[] = [
     note: "Attempt history, ascending",
   },
   {
+    method: "GET",
+    path: "/runs?limit=n",
+    note: "Recent runs across every job, newest first",
+  },
+  {
     method: "PUT",
     path: "/jobs/:id",
     note: "Merge update — recomputes next_run_at",
@@ -3716,11 +4634,12 @@ function SettingsPage({
           <b>3 failed attempts</b> and is then skipped by the claimer
           for good — it only claims{" "}
           <code>status = 'active' AND next_run_at &lt;= now()</code>.
-          Reactivating restores the first half. It does not force a
-          run: the worker released the job with{" "}
-          <code>next_run_at</code> already advanced to the next cron
-          occurrence, and no endpoint can move that earlier, so each
-          job resumes at the time shown below.
+          Reactivating restores both halves: the status goes back to{" "}
+          <code>active</code> and <code>next_run_at</code> is
+          recomputed from the moment you reactivate, so the job picks
+          up at its next cron occurrence from now instead of at the
+          stale time it was carrying while it was stopped. Missed runs
+          are not replayed.
         </p>
 
         {dead.length === 0 ? (
@@ -3735,10 +4654,7 @@ function SettingsPage({
                 <code>{job.cronExpression}</code>
                 <span>
                   {describeCron(job.cronExpression)}
-                  {" — resumes "}
-                  {job.nextRunAt
-                    ? date(job.nextRunAt)
-                    : "only once next_run_at is set"}
+                  {" — resumes at its next occurrence once reactivated"}
                 </span>
               </li>
             ))}
@@ -4217,6 +5133,25 @@ function nextOccurrences(
   }
 
   return found;
+}
+
+/**
+ * What to show under a NEXT RUN heading.
+ *
+ * next_run_at is only recomputed while a job is active (see jobStore.update), so
+ * a paused or dead-lettered job keeps whatever timestamp it had when it stopped.
+ * Handed straight to relative() that renders as "3m ago" under a NEXT RUN
+ * header, which reads as a run the scheduler missed rather than a job the user
+ * deliberately stopped. Neither one is due, so neither one gets a time.
+ */
+function nextRunLabel(
+  job: Job,
+  format: (value: string) => string
+): string {
+  if (job.status === "paused") return "Paused — no next run";
+  if (job.status === "dead_letter") return "Stopped after repeated failures";
+
+  return job.nextRunAt ? format(job.nextRunAt) : "Not scheduled";
 }
 
 function relative(dateValue: string) {

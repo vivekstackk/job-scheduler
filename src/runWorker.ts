@@ -10,12 +10,19 @@ const worker = new Worker(jobHandler, {
   leaseDurationMs: Number(process.env.LEASE_DURATION_MS) || 15000,
   heartbeatIntervalMs: Number(process.env.HEARTBEAT_INTERVAL_MS) || 5000,
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS) || 2000,
+  verbose: process.env.WORKER_VERBOSE === "true",
 });
 
 const name = process.env.HOSTNAME ?? "local";
 
-worker.start().catch((error: Error) => {
-  console.error(`[${name}] worker crashed: ${error.message}`);
+// start() handles its own per-tick failures and only resolves after stop(), so
+// a rejection here means the loop itself broke and this process has stopped
+// executing jobs. Exiting non-zero lets the platform restart it.
+worker.start().catch((error: unknown) => {
+  const detail =
+    error instanceof Error ? (error.stack ?? error.message) : String(error);
+
+  console.error(`[${name}] worker crashed: ${detail}`);
   process.exit(1);
 });
 
